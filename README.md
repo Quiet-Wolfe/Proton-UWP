@@ -18,6 +18,42 @@ with a particular title.
 [changelog]: https://github.com/ValveSoftware/Proton/wiki/Changelog
 
 
+Universal Windows Platform (UWP) Support - EXPERIMENTAL
+--------------------------------------------------------
+
+This fork includes **experimental support for running UWP applications** from the Microsoft Store.
+
+**Quick Start:**
+
+```bash
+# Build Proton
+make install
+
+# Get help downloading UWP packages
+./uwp_download_helper.sh 9NCBL78CG9N7  # Valheim's Product ID
+
+# Launch a UWP app
+./proton_uwp Valheim.appx
+```
+
+**Documentation:**
+- [Quick Start Guide](QUICKSTART-UWP.md) - Get started in 5 minutes
+- [Full UWP Documentation](README-UWP.md) - Complete reference
+
+**⚠️ Important:** UWP support is experimental. Many apps may not work due to limited WinRT API coverage in Wine. Success rate varies by application.
+
+**What Works:**
+- DirectX 11 games (via DXVK)
+- Basic UWP applications without complex UI
+- Apps with minimal WinRT API requirements
+
+**What Doesn't Work:**
+- Apps requiring XAML UI framework
+- Xbox Live integration
+- Microsoft Store DRM
+- Advanced WinRT features
+
+
 Obtaining Proton sources
 ------------------------
 

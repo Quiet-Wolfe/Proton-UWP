@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+
+"""
+Proton UWP Launcher
+Launch UWP/APPX applications through Proton/Wine
+"""
+
+import os
+import sys
+import subprocess
+import logging
+from pathlib import Path
+from typing import Optional
+
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from uwp_extractor import UWPPackageExtractor
+from uwp_manifest import AppxManifest
+from uwp_prefix import UWPPrefixSetup
+
+
+class ProtonUWPLauncher:
+    """Launch UWP applications with Proton"""
+
+    def __init__(self, proton_dir: Optional[Path] = None, log_level=logging.INFO):
+        """
+        Initialize Proton UWP launcher
+
+        Args:
+            proton_dir: Path to Proton installation (auto-detect if None)
+            log_level: Logging level
+        """
+        self.logger = logging.getLogger('ProtonUWP')
+        self.logger.setLevel(log_level)
+
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('[%(levelname)s] %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+
+        # Find Proton directory
+        if proton_dir is None:
+            proton_dir = Path(__file__).parent
+        self.proton_dir = Path(proton_dir)
+
+        # Find dist directory
+        self.dist_dir = self._find_dist_dir()
+
+        # Create extractor
+        self.extractor = UWPPackageExtractor(log_level=log_level)
+
+    def _find_dist_dir(self) -> Path:
+        """Find Proton dist directory"""
+        # Check for built distribution
+        candidates = [
+            self.proton_dir / 'dist' / 'files',
+            self.proton_dir / 'files',
+            self.proton_dir,
+        ]
+
+        for candidate in candidates:
+            wine_bin = candidate / 'bin' / 'wine'
+            if wine_bin.exists():
+                self.logger.debug(f"Found dist directory: {candidate}")
+                return candidate
+
+        raise RuntimeError(
+            "Could not find Proton dist directory. "
+            "Make sure Proton is built (run 'make' first)"
+        )
+
+    def extract_package(self, package_path: Path, extract_dir: Optional[Path] = None) -> Optional[Path]:
+        """
+        Extract UWP package
+
+        Args:
+            package_path: Path to APPX/MSIX file
+            extract_dir: Directory to extract to (default: ~/.proton_uwp_apps)
+
+        Returns:
+            Path to extracted package directory
+        """
+        if extract_dir is None:
+            extract_dir = Path.home() / '.proton_uwp_apps'
+
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        self.logger.info(f"Extracting package: {package_path.name}")
+
+        main_package = self.extractor.create_installation(
+            [package_path],
+            extract_dir,
+            architecture='x64'
+        )
+
+        if main_package is None:
+            self.logger.error("Failed to extract package")
+            return None
+
+        self.logger.info(f"Package extracted to: {main_package}")
+        return main_package
+
+    def setup_prefix(self, prefix_path: Optional[Path] = None, force: bool = False) -> UWPPrefixSetup:
+        """
+        Setup Wine prefix for UWP
+
+        Args:
+            prefix_path: Path to prefix (default: ~/.proton_uwp_prefix)
+            force: Force re-initialization
+
+        Returns:
+            UWPPrefixSetup instance
+        """
+        if prefix_path is None:
+            prefix_path = Path.home() / '.proton_uwp_prefix'
+
+        setup = UWPPrefixSetup(
+            prefix_path,
+            self.dist_dir,
+            log_level=self.logger.level
+        )
+
+        if not prefix_path.exists() or force:
+            self.logger.info("Initializing UWP Wine prefix...")
+            setup.initialize_prefix(force=force)
+        else:
+            self.logger.info(f"Using existing prefix: {prefix_path}")
+            # Still create UWP directories in case they're missing
+            setup.create_uwp_directories()
+
+        return setup
+
+    def launch_uwp_app(self, package_dir: Path, prefix_setup: UWPPrefixSetup,
+                       args: Optional[list] = None) -> int:
+        """
+        Launch a UWP application
+
+        Args:
+            package_dir: Extracted package directory
+            prefix_setup: Configured UWP prefix
+            args: Additional arguments to pass to the app
+
+        Returns:
+            Exit code
+        """
+        # Find the main executable
+        exe_path = self.extractor.find_main_executable(package_dir)
+
+        if exe_path is None:
+            self.logger.error("Could not find main executable in package")
+            return 1
+
+        self.logger.info(f"Main executable: {exe_path.name}")
+
+        # Install app into prefix if not already done
+        prefix_setup.install_uwp_app(package_dir)
+
+        # Setup environment
+        env = prefix_setup.setup_environment()
+
+        # Add Wine debugging if requested
+        if os.getenv('PROTON_LOG'):
+            log_file = Path.home() / 'proton_uwp.log'
+            env['WINEDEBUG'] = '+all'
+            env['PROTON_LOG_FILE'] = str(log_file)
+            self.logger.info(f"Wine logging enabled: {log_file}")
+
+        # Get Wine binary (use wine64 for 64-bit apps)
+        wine_bin = prefix_setup.get_wine64_binary()
+
+        # Build command
+        command = [str(wine_bin), str(exe_path)]
+        if args:
+            command.extend(args)
+
+        self.logger.info(f"Launching: {exe_path.name}")
+        self.logger.debug(f"Command: {' '.join(command)}")
+
+        # Launch the application
+        try:
+            result = subprocess.run(
+                command,
+                env=env,
+                cwd=str(package_dir)
+            )
+            return result.returncode
+
+        except KeyboardInterrupt:
+            self.logger.info("Interrupted by user")
+            return 130
+
+        except Exception as e:
+            self.logger.error(f"Failed to launch app: {e}")
+            return 1
+
+    def run(self, package_path: Path, extract_dir: Optional[Path] = None,
+            prefix_path: Optional[Path] = None, force_extract: bool = False,
+            force_prefix: bool = False, app_args: Optional[list] = None) -> int:
+        """
+        Complete workflow: extract, setup, and launch UWP app
+
+        Args:
+            package_path: Path to APPX/MSIX file or extracted directory
+            extract_dir: Directory to extract packages
+            prefix_path: Wine prefix path
+            force_extract: Force re-extraction
+            force_prefix: Force prefix re-initialization
+            app_args: Arguments to pass to the app
+
+        Returns:
+            Exit code
+        """
+        # Check if it's already an extracted directory
+        if package_path.is_dir():
+            manifest = package_path / 'AppxManifest.xml'
+            if manifest.exists():
+                self.logger.info("Using pre-extracted package")
+                package_dir = package_path
+            else:
+                self.logger.error(f"Not a valid UWP package directory: {package_path}")
+                return 1
+        else:
+            # Extract the package
+            if force_extract:
+                # Remove existing extraction
+                if extract_dir:
+                    extracted_name = package_path.stem
+                    existing = extract_dir / extracted_name
+                    if existing.exists():
+                        import shutil
+                        shutil.rmtree(existing)
+
+            package_dir = self.extract_package(package_path, extract_dir)
+            if package_dir is None:
+                return 1
+
+        # Setup prefix
+        prefix_setup = self.setup_prefix(prefix_path, force_prefix)
+
+        # Launch the app
+        return self.launch_uwp_app(package_dir, prefix_setup, app_args)
+
+
+def main():
+    """Command-line interface"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Launch UWP/APPX applications with Proton',
+        epilog="""
+Examples:
+  # Launch Valheim from APPX package
+  %(prog)s Valheim.appx
+
+  # Launch with Wine debugging
+  PROTON_LOG=1 %(prog)s Valheim.appx
+
+  # Force re-extraction and prefix rebuild
+  %(prog)s --force-extract --force-prefix Valheim.appx
+
+  # Launch from pre-extracted directory
+  %(prog)s ~/.proton_uwp_apps/Valheim_extracted/
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument('package', help='Path to APPX/MSIX file or extracted directory')
+    parser.add_argument('app_args', nargs='*', help='Arguments to pass to the application')
+
+    parser.add_argument('--extract-dir', type=Path,
+                       help='Directory to extract packages (default: ~/.proton_uwp_apps)')
+    parser.add_argument('--prefix', type=Path,
+                       help='Wine prefix path (default: ~/.proton_uwp_prefix)')
+    parser.add_argument('--proton-dir', type=Path,
+                       help='Proton installation directory (default: auto-detect)')
+
+    parser.add_argument('--force-extract', action='store_true',
+                       help='Force re-extraction of package')
+    parser.add_argument('--force-prefix', action='store_true',
+                       help='Force re-initialization of Wine prefix')
+
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Verbose output')
+    parser.add_argument('--info', action='store_true',
+                       help='Show package info without launching')
+
+    args = parser.parse_args()
+
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+
+    package_path = Path(args.package)
+
+    # If just showing info
+    if args.info:
+        if not package_path.exists():
+            print(f"Error: {package_path} not found")
+            return 1
+
+        if package_path.is_dir():
+            manifest_path = package_path / 'AppxManifest.xml'
+            if manifest_path.exists():
+                manifest = AppxManifest(manifest_path)
+                print(manifest)
+                print("\n" + "="*60)
+                import json
+                print(json.dumps(manifest.to_dict(), indent=2))
+            else:
+                print("Error: Not a valid UWP package directory")
+                return 1
+        else:
+            extractor = UWPPackageExtractor(log_level=log_level)
+            info = extractor.get_package_info(package_path)
+            if info:
+                import json
+                print(json.dumps(info, indent=2))
+            else:
+                print("Error: Could not get package info")
+                return 1
+        return 0
+
+    # Normal launch
+    try:
+        launcher = ProtonUWPLauncher(
+            proton_dir=args.proton_dir,
+            log_level=log_level
+        )
+
+        return launcher.run(
+            package_path=package_path,
+            extract_dir=args.extract_dir,
+            prefix_path=args.prefix,
+            force_extract=args.force_extract,
+            force_prefix=args.force_prefix,
+            app_args=args.app_args
+        )
+
+    except Exception as e:
+        print(f"Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
