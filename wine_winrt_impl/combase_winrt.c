@@ -208,7 +208,9 @@ static HRESULT load_activation_factory_from_dll(const WCHAR *class_name,
     /* Try to map class name to DLL name */
     /* For now, simple mapping: Windows.Foundation.* -> windows.foundation.dll */
 
-    if (wcsncmp(class_name, L"Windows.Foundation.", 19) == 0)
+    if (wcsncmp(class_name, L"Windows.Foundation.Collections.", 32) == 0)
+        wcscpy(dll_name, L"windows.foundation.dll");
+    else if (wcsncmp(class_name, L"Windows.Foundation.", 19) == 0)
         wcscpy(dll_name, L"windows.foundation.dll");
     else if (wcsncmp(class_name, L"Windows.ApplicationModel.", 25) == 0)
         wcscpy(dll_name, L"windows.applicationmodel.dll");

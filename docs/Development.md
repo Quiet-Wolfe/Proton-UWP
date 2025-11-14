@@ -356,6 +356,8 @@ wine test_winrt.exe
 - Core WinRT runtime (374 lines)
 - Windows.Foundation.Uri (383 lines)
 - Windows.ApplicationModel.Package (774 lines)
+- **Windows.Foundation.Collections.PropertySet** (725 lines) - Critical for Valheim!
+- **Windows.Foundation.PropertyValue** (1,089 lines) - Factory for typed values
 - Frida tracer
 - Documentation
 
@@ -365,13 +367,14 @@ wine test_winrt.exe
 - Async operations
 
 ### ⏳ TODO (High Priority)
-Based on common UWP app requirements:
+Based on Valheim trace data (93+ PropertySet activations):
 
 1. **Windows.Storage.ApplicationData** - Save games, settings
 2. **Windows.Gaming.Input.Gamepad** - Controller support
 3. **IAsyncOperation** - Async pattern used by many APIs
-4. **Windows.Foundation.Collections** - IVector, IMap
-5. **Windows.System.User** - User information
+4. **Windows.Foundation.Collections.ValueSet** - Key-value collection (similar to PropertySet)
+5. **Windows.Foundation.Collections.IVector** - Generic vector collection
+6. **Windows.System.User** - User information
 
 ### ⏳ TODO (Medium Priority)
 6. **Windows.Graphics.Display** - Display information
@@ -452,7 +455,10 @@ winedbg app.exe
 | WinRT Runtime | 374 | Complete |
 | Windows.Foundation.Uri | 383 | Partial |
 | Windows.ApplicationModel.Package | 774 | Complete |
-| **Total C Code** | **~2,000** | **60%** |
+| Windows.Foundation.Collections.PropertySet | 725 | Complete |
+| Windows.Foundation.PropertyValue | 1,089 | Complete |
+| windows.foundation DLL main | 115 | Complete |
+| **Total C Code** | **~3,900** | **75%** |
 
 ---
 
